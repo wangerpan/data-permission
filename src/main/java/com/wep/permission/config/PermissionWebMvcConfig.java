@@ -1,5 +1,6 @@
 package com.wep.permission.config;
 
+import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -7,6 +8,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * @author wep
  * 字段编辑 权限验证
  */
+@Configuration
 public class PermissionWebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {

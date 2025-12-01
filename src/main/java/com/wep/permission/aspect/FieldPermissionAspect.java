@@ -11,7 +11,7 @@ import java.lang.reflect.Field;
 import java.util.Arrays;
 
 /**
- * 用于数据对象的权限控制
+ * 用于字段编辑权限控制
  */
 @Aspect
 @Component

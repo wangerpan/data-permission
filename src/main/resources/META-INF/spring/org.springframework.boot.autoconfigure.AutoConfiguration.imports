@@ -1,6 +1,7 @@
+com.wep.permission.config.PermissionBatisPlusConfig
+com.wep.permission.config.PermissionWebMvcConfig
 com.wep.permission.config.DataScopeHandler
 com.wep.permission.config.PermissionResponseBodyAdvice
-com.wep.permission.strategy.ExpressStrategy
 com.wep.permission.aspect.DataObjPermissionAspect
 com.wep.permission.aspect.DataScopeAspect
 com.wep.permission.aspect.FieldPermissionAspect
