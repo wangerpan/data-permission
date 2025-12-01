@@ -5,7 +5,10 @@ import cn.hutool.core.util.StrUtil;
 import com.wep.permission.annotation.DataScope;
 import com.wep.permission.annotation.DataScopeExpression;
 import com.wep.permission.context.DataScopeContext;
+import com.wep.permission.dto.DataScopeInfo;
+import com.wep.permission.dto.DataScopeRuleDTO;
 import com.wep.permission.enums.ExpressionEnum;
+import com.wep.permission.enums.ProvideTypeEnum;
 import com.wep.permission.enums.SpliceTypeEnum;
 import com.wep.permission.utils.TokenUtils;
 import org.aspectj.lang.JoinPoint;
@@ -28,9 +31,12 @@ import java.util.stream.Collectors;
 public class DataScopeAspect {
 
     private static final ExpressionParser PARSER = new SpelExpressionParser();
+    private static final ThreadLocal<DataScopeInfo> DATA_SCOPE_INFO = new ThreadLocal<>();
 
     @Before("@annotation(dataScope)")
     public void before(JoinPoint joinPoint, DataScope dataScope) {
+        DataScopeInfo dataScopeInfo = buildDataScopeInfo(dataScope);
+        DATA_SCOPE_INFO.set(dataScopeInfo);
         String condition = buildCondition(dataScope);
         DataScopeContext.setScopeCondition(condition);
     }
@@ -38,6 +44,31 @@ public class DataScopeAspect {
     @After("@annotation(com.wep.permission.annotation.DataScope)")
     public void after() {
         DataScopeContext.clear();
+        DATA_SCOPE_INFO.remove();
+    }
+
+    public static DataScopeInfo getDataScopeInfo() {
+        return DATA_SCOPE_INFO.get();
+    }
+
+    private DataScopeInfo buildDataScopeInfo(DataScope dataScope) {
+        DataScopeInfo dataScopeInfo = new DataScopeInfo();
+        List<DataScopeRuleDTO> ruleDTOList = new ArrayList<>();
+        for (DataScopeExpression expr : dataScope.dataScopeExpressions()) {
+            DataScopeRuleDTO dto = new DataScopeRuleDTO();
+            dto.setTableAlias(expr.tableAlias());
+            dto.setColumnName(expr.columnName());
+            dto.setSpliceType(expr.spliceType().name());
+            dto.setExpression(expr.expression().name());
+
+            String resolvedValue = resolveValue(expr.value());
+            dto.setProvideType(ProvideTypeEnum.VALUE.getCode());
+            dto.setValue(resolvedValue);
+            dto.setResult(resolvedValue);
+            ruleDTOList.add(dto);
+        }
+        dataScopeInfo.setRuleList(ruleDTOList);
+        return dataScopeInfo;
     }
 
     private String buildCondition(DataScope dataScope) {
