@@ -65,7 +65,9 @@ public class FieldPermissionAspect {
 
     private Map<String, Object> toMap(Object result) {
         if (result instanceof Map<?, ?> map) {
-            return MapUtil.<String, Object>builder().putAll(map).build();
+            Map<String, Object> target = new HashMap<>();
+            map.forEach((key, value) -> target.put(String.valueOf(key), value));
+            return target;
         }
         return BeanUtil.beanToMap(result, false, true);
     }
