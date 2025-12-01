@@ -111,7 +111,7 @@ public class TokenUtils {
         if (StrUtil.isEmpty(deptIds)) {
             return new ArrayList<>();
         }
-        // 从header获取部门d列表
+        // 从header获取部门id列表
         return StrUtil.split(deptIds, StrUtil.COMMA);
     }
 
@@ -126,7 +126,7 @@ public class TokenUtils {
         if (StrUtil.isEmpty(deptIds)) {
             return new ArrayList<>();
         }
-        // 从header获取部门d列表
+        // 从header获取部门id列表
         return StrUtil.split(deptIds, StrUtil.COMMA);
     }
 

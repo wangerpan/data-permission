@@ -3,10 +3,12 @@ package com.wep.permission.config;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 /**
  * 数据权限验证
  */
+@Configuration
 public class PermissionBatisPlusConfig {
     @Autowired
     private DataScopeHandler dataScopeHandler;
