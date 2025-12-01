@@ -2,133 +2,95 @@ package com.wep.permission.aspect;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ArrayUtil;
-import com.alibaba.fastjson2.JSON;
+import cn.hutool.core.util.StrUtil;
 import com.wep.permission.annotation.DataObjPermission;
 import com.wep.permission.exception.PermissionException;
 import com.wep.permission.utils.TokenUtils;
-import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.Signature;
-import org.aspectj.lang.annotation.After;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
 import org.aspectj.lang.annotation.Pointcut;
-import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.lang.reflect.Method;
-import java.util.List;
+import java.util.Arrays;
+import java.util.Optional;
 
 /**
- * @author wep
+ * 对 {@link DataObjPermission} 进行校验的切面。
  */
 @Aspect
-@Slf4j
 @Component
 public class DataObjPermissionAspect {
 
-    @Resource
-    private HttpServletRequest request;
-
-    // 方法切点
-    @Pointcut("@within(com.wep.permission.annotation.DataObjPermission)")
-    public void dataScopePointCut() {
+    @Pointcut("@within(com.wep.permission.annotation.DataObjPermission) || @annotation(com.wep.permission.annotation.DataObjPermission)")
+    public void pointcut() {
     }
 
-    @After("dataScopePointCut()")
-    public void clearThreadLocal() {
-
+    @Before("pointcut() && @annotation(permission)")
+    public void beforeWithAnnotation(JoinPoint joinPoint, DataObjPermission permission) {
+        handlePermission(permission);
     }
 
-    @Before("dataScopePointCut()")
-    public void doBefore(JoinPoint point) {
-        Signature signature = point.getSignature();
-        MethodSignature methodSignature = (MethodSignature) signature;
-        Method method = methodSignature.getMethod();
+    @Before("pointcut() && !@annotation(com.wep.permission.annotation.DataObjPermission) && @within(permission)")
+    public void beforeWithClass(JoinPoint joinPoint, DataObjPermission permission) {
+        handlePermission(permission);
+    }
 
-        // 获得作用于方法上的注解
-        DataObjPermission dataObjPermission = method.getAnnotation(DataObjPermission.class);
-        // 获取不到 在获取目标类上的注解
-        if (dataObjPermission == null) {
-            Class<?> targetClass = point.getTarget().getClass();
-            dataObjPermission = targetClass.getAnnotation(DataObjPermission.class);
-
-            // 如果类上也没有注解，再获取接口上的注解
-            if (dataObjPermission == null) {
-                Class<?>[] interfaces = targetClass.getInterfaces();
-                for (Class<?> interfaceClass : interfaces) {
-                    dataObjPermission = interfaceClass.getAnnotation(DataObjPermission.class);
-                    if (dataObjPermission != null) {
-                        break;
-                    }
-                }
-            }
-        }
-        // 如果接口上也获取不到,则添加的该注解无效 或者把注解成非必须
-        if (dataObjPermission == null || !dataObjPermission.required()) {
+    private void handlePermission(DataObjPermission permission) {
+        if (permission == null || !permission.required()) {
             return;
         }
-        checkControllerPermission(dataObjPermission);
-
+        if (!validateUser(permission) || !validateRole(permission)) {
+            throw new PermissionException("当前登录人不在允许的角色或用户列表中，拒绝访问");
+        }
+        if (!validateRequest(permission)) {
+            throw new PermissionException("请求方式或路径不在授权范围内，拒绝访问");
+        }
     }
 
-    /**
-     * 定义数据对象的权限控制
-     *
-     * @param dataObjPermission
-     */
-    private void checkControllerPermission(DataObjPermission dataObjPermission) {
-        // 获取当前用户ID
-        log.debug("request URI = {}", request.getRequestURI());
-        String userId = TokenUtils.getCurrentUserId();
-        // 用户的角色key列表
-        List<String> roleKeyList = TokenUtils.getCurrentUserRoleKeys();
-
-        // 注解配置的角色key列表
-        String[] roleKeys = dataObjPermission.roleKeys();
-
-        // 如果不包含任意一个,则没有权限
-        if (!CollUtil.containsAny(roleKeyList, CollUtil.toList(roleKeys))) {
-            String[] userIds = dataObjPermission.userIds();
-            if (ArrayUtil.isNotEmpty(userIds)) {
-                if (!ArrayUtil.contains(roleKeys, userId)) {
-                    throw new PermissionException("The user role can't access this resource. " +
-                            " roleKeyList = " + JSON.toJSONString(roleKeyList));
-                }
-            }
-            throw new PermissionException("The user role can't access this resource. " +
-                    " roleKeyList = " + JSON.toJSONString(roleKeyList));
+    private boolean validateUser(DataObjPermission permission) {
+        String[] userIds = permission.userIds();
+        if (ArrayUtil.isEmpty(userIds)) {
+            return true;
         }
+        String currentUserId = TokenUtils.getCurrentUserId();
+        return StrUtil.isNotBlank(currentUserId) && Arrays.asList(userIds).contains(currentUserId);
+    }
 
-        // 通过请求方式进行权限验证
-        // 根据不同的请求方式 控制数据对象的接口是否有权限请求
-        if (dataObjPermission.isRequestType()) {
-            log.debug("getMethod = {}", request.getMethod());
-            String requestType = request.getMethod();
-            String[] requestTypes = dataObjPermission.requestTypes();
-            if (ArrayUtil.isNotEmpty(requestTypes)) {
-                if (!ArrayUtil.contains(requestTypes, requestType)) {
-                    throw new PermissionException("User does not have access to this resource" + requestType + " is not support");
-                }
-            }
-        } else {
-            if (ArrayUtil.isEmpty(dataObjPermission.urls())) {
-                return;
-            }
-            String url = request.getRequestURI();
-            String[] permissionUrls = dataObjPermission.urls();
-            boolean hasPermission = false;
-            for (String permissionUrl : permissionUrls) {
-                if (url.contains(permissionUrl)) {
-                    hasPermission = true;
-                    break;
-                }
-            }
-            if (!hasPermission) {
-                throw new PermissionException("User does not have access to this resource");
+    private boolean validateRole(DataObjPermission permission) {
+        String[] roleKeys = permission.roleKeys();
+        if (ArrayUtil.isEmpty(roleKeys)) {
+            return true;
+        }
+        return CollUtil.containsAny(Arrays.asList(roleKeys), Optional.ofNullable(TokenUtils.getCurrentRoles()).orElseGet(CollUtil::newHashSet));
+    }
+
+    private boolean validateRequest(DataObjPermission permission) {
+        if (!permission.isRequestType() && ArrayUtil.isEmpty(permission.urls())) {
+            return true;
+        }
+        HttpServletRequest request = currentRequest();
+        if (request == null) {
+            return true;
+        }
+        if (permission.isRequestType()) {
+            String method = request.getMethod();
+            if (!Arrays.asList(permission.requestTypes()).contains(method)) {
+                return false;
             }
         }
+        if (ArrayUtil.isNotEmpty(permission.urls())) {
+            String path = request.getRequestURI();
+            return Arrays.stream(permission.urls()).anyMatch(path::contains);
+        }
+        return true;
+    }
+
+    private HttpServletRequest currentRequest() {
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        return attributes == null ? null : attributes.getRequest();
     }
 }

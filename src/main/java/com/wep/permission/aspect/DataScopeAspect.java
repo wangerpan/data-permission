@@ -1,182 +1,91 @@
 package com.wep.permission.aspect;
 
-import cn.hutool.core.util.ArrayUtil;
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
-import com.alibaba.fastjson2.JSONObject;
 import com.wep.permission.annotation.DataScope;
 import com.wep.permission.annotation.DataScopeExpression;
-import com.wep.permission.dto.DataScopeInfo;
-import com.wep.permission.dto.DataScopeRuleDTO;
-import com.wep.permission.enums.ProvideTypeEnum;
-import com.wep.permission.exception.PermissionException;
-import jakarta.annotation.Resource;
-import lombok.extern.slf4j.Slf4j;
+import com.wep.permission.context.DataScopeContext;
+import com.wep.permission.enums.ExpressionEnum;
+import com.wep.permission.enums.SpliceTypeEnum;
+import com.wep.permission.utils.TokenUtils;
 import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.Signature;
 import org.aspectj.lang.annotation.After;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
-import org.aspectj.lang.annotation.Pointcut;
-import org.aspectj.lang.reflect.MethodSignature;
-import org.springframework.beans.factory.NoSuchBeanDefinitionException;
-import org.springframework.context.ApplicationContext;
+import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.stereotype.Component;
 
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * @author wep
+ * 数据范围切面：在执行方法前计算 SQL 片段，执行后清理上下文。
  */
 @Aspect
-@Slf4j
 @Component
 public class DataScopeAspect {
 
+    private static final ExpressionParser PARSER = new SpelExpressionParser();
 
-    /**
-     * 通过ThreadLocal记录权限相关的属性值
-     */
-    private static ThreadLocal<DataScopeInfo> threadLocal = new ThreadLocal<>();
-    private static ThreadLocal<Boolean> methodProcessed = new ThreadLocal<>();
-
-    @Resource
-    private ApplicationContext context;
-
-    public static DataScopeInfo getDataScopeInfo() {
-        return threadLocal.get();
+    @Before("@annotation(dataScope)")
+    public void before(JoinPoint joinPoint, DataScope dataScope) {
+        String condition = buildCondition(dataScope);
+        DataScopeContext.setScopeCondition(condition);
     }
 
-    // 方法切点
-    @Pointcut("@annotation(com.wep.permission.annotation.DataScope)")
-    public void dataScopePointCut() {
+    @After("@annotation(com.wep.permission.annotation.DataScope)")
+    public void after() {
+        DataScopeContext.clear();
     }
 
-    @After("dataScopePointCut()")
-    public void clearThreadLocal() {
-        threadLocal.remove();
-        methodProcessed.remove();
-    }
-
-    @Before("dataScopePointCut()")
-    public void doBefore(JoinPoint point) {
-        if (methodProcessed.get() != null && methodProcessed.get()) {
-            return;
-        } else {
-            methodProcessed.set(true);
+    private String buildCondition(DataScope dataScope) {
+        List<String> segments = new ArrayList<>();
+        for (DataScopeExpression expr : dataScope.dataScopeExpressions()) {
+            String value = resolveValue(expr.value());
+            String formattedValue = formatValue(expr.expression(), value);
+            String segment = expr.tableAlias() + "." + expr.columnName() + " " + expr.expression().getSymbol() + " " + formattedValue;
+            segments.add(segment + (expr.spliceType() == SpliceTypeEnum.OR ? " OR " : " AND "));
         }
-        Signature signature = point.getSignature();
-        MethodSignature methodSignature = (MethodSignature) signature;
-        Method method = methodSignature.getMethod();
-
-        // 获得作用于方法上的注解
-        DataScope dataScope = method.getAnnotation(DataScope.class);
-        // 如果接口上也获取不到,则添加的该注解无效 或者把注解成非必须
-        if (dataScope == null || !dataScope.required()) {
-            return;
+        if (CollUtil.isEmpty(segments)) {
+            return StrUtil.EMPTY;
         }
-        try {
-            // 数据对象范围控制
-            DataScopeInfo dataScopeInfo = new DataScopeInfo();
-            DataScopeExpression[] dataScopeExpressions = dataScope.dataScopeExpressions();
-            if (ArrayUtil.isNotEmpty(dataScopeExpressions)) {
-                List<DataScopeRuleDTO> ruleList = Arrays.stream(dataScopeExpressions).map(this::getDataScopeRuleDTO
-                ).collect(Collectors.toList());
-                dataScopeInfo.setRuleList(ruleList);
+        // 去除最后多余的 AND/OR
+        String joined = segments.stream().map(this::trimTail).collect(Collectors.joining());
+        return "(" + joined + ")";
+    }
+
+    private String resolveValue(String rawValue) {
+        if (StrUtil.startWith(rawValue, "com.wep.permission.utils.TokenUtils#")) {
+            String method = StrUtil.removePrefix(rawValue, "com.wep.permission.utils.TokenUtils#");
+            if (StrUtil.equals(method, "getCurrentUserId")) {
+                return TokenUtils.getCurrentUserId();
             }
-            threadLocal.set(dataScopeInfo);
-        } catch (Exception e) {
-            throw new PermissionException("数据对象注解切面逻辑报错：" + e.getMessage());
         }
+        if (StrUtil.startWith(rawValue, "#{")) {
+            return PARSER.parseExpression(rawValue.substring(2, rawValue.length() - 1)).getValue(String.class);
+        }
+        return rawValue;
     }
 
-    private DataScopeRuleDTO getDataScopeRuleDTO(DataScopeExpression dataScopeExpression) {
-        DataScopeRuleDTO dataScopeRuleDTO = new DataScopeRuleDTO();
-
-        dataScopeRuleDTO.setSpliceType(dataScopeExpression.spliceType().name());
-        dataScopeRuleDTO.setTableAlias(dataScopeExpression.tableAlias());
-        dataScopeRuleDTO.setColumnName(dataScopeExpression.columnName());
-        dataScopeRuleDTO.setExpression(dataScopeExpression.expression().name());
-        dataScopeRuleDTO.setProvideType(dataScopeExpression.provideTypeEnum().getCode());
-
-        // 处理值类型为method
-        handleMethodType(dataScopeExpression, dataScopeRuleDTO);
-
-        dataScopeRuleDTO.setValue(dataScopeExpression.value());
-        dataScopeRuleDTO.setFormalParam(dataScopeExpression.formalParam());
-        dataScopeRuleDTO.setActualParam(dataScopeExpression.actualParam());
-        return dataScopeRuleDTO;
+    private String formatValue(ExpressionEnum expression, String value) {
+        if (expression == ExpressionEnum.IN) {
+            return "(" + value + ")";
+        }
+        if (expression == ExpressionEnum.LIKE) {
+            return "'%" + value + "%'";
+        }
+        return "'" + value + "'";
     }
 
-    /**
-     * 处理值类型为方法的逻辑
-     *
-     * @param dataScopeExpression
-     * @param dataScopeRuleDTO
-     */
-    private void handleMethodType(DataScopeExpression dataScopeExpression, DataScopeRuleDTO dataScopeRuleDTO) {
-        if (!ProvideTypeEnum.METHOD.getCode().equals(dataScopeExpression.provideTypeEnum().getCode())) {
-            return;
+    private String trimTail(String segment) {
+        if (segment.endsWith(" AND ")) {
+            return segment.substring(0, segment.length() - 5);
         }
-
-        try {
-            Class<?>[] paramsTypes = null;
-            Object[] argValues = null;
-
-            if (StrUtil.isNotBlank(dataScopeExpression.formalParam()) && StrUtil.isNotBlank(dataScopeExpression.actualParam())) {
-                // 获取形参数组
-                String[] formalArray = dataScopeExpression.formalParam().split(";");
-                // 获取实参数组
-                String[] actualArray = dataScopeExpression.actualParam().split(";");
-
-                if (formalArray.length != actualArray.length)
-                    throw new RuntimeException("形参数量与实参数量不符合");
-
-                // 转换形参为Class数组
-                paramsTypes = new Class<?>[formalArray.length];
-                for (int i = 0; i < formalArray.length; i++) {
-                    paramsTypes[i] = Class.forName(formalArray[i].trim());
-                }
-
-                // 转换实参为Object数组
-                argValues = new Object[actualArray.length];
-                for (int i = 0; i < actualArray.length; i++) {
-                    argValues[i] = JSONObject.parseObject(actualArray[i], paramsTypes[i]);
-                }
-            }
-            String[] parts = dataScopeExpression.value().split("#");
-            String className = parts[0];
-            String methodName = parts[1];
-
-            Class<?> clazz = Class.forName(className);
-            Object result;
-
-            Method targetMethod = clazz.getDeclaredMethod(methodName, paramsTypes);
-            if (Modifier.isStatic(targetMethod.getModifiers())) {
-                // 设置静态方法可访问
-                targetMethod.setAccessible(true);
-                // 执行静态方法
-                result = targetMethod.invoke(null, argValues);
-            } else {
-                // 尝试从容器中获取实例
-                Object instance = context.getBean(Class.forName(className));
-                Class<?> beanClazz = instance.getClass();
-                Method beanClazzMethod = beanClazz.getDeclaredMethod(methodName, paramsTypes);
-                // 执行方法
-                result = beanClazzMethod.invoke(instance, argValues);
-            }
-            dataScopeRuleDTO.setResult(result);
-        } catch (NoSuchBeanDefinitionException e) {
-            throw new PermissionException("没有相关的bean");
-        } catch (NoSuchMethodException e) {
-            throw new PermissionException("配置了不存在的方法");
-        } catch (ClassNotFoundException e) {
-            throw new PermissionException("配置了不存在的类");
-        } catch (Exception e) {
-            throw new PermissionException("其他错误：" + e.getMessage());
+        if (segment.endsWith(" OR ")) {
+            return segment.substring(0, segment.length() - 4);
         }
+        return segment;
     }
 }

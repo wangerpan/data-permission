@@ -1,21 +1,25 @@
 package com.wep.permission.enums;
 
 /**
- * @author wep
+ * 支持的数据范围表达式枚举。
  */
 public enum ExpressionEnum {
-    EQ,
-    NE,
-    LIKE,
-    RIGHT_LIKE,
-    LEFT_LIKE,
-    GT,
-    GE,
-    LT,
-    LE,
-    IN,
-    NOT_IN,
-    IS_NULL,
-    NOT_NULL,
-    BETWEEN
+    EQ("="),
+    NE("<>"),
+    GT(">"),
+    GE(">="),
+    LT("<"),
+    LE("<="),
+    LIKE("LIKE"),
+    IN("IN");
+
+    private final String symbol;
+
+    ExpressionEnum(String symbol) {
+        this.symbol = symbol;
+    }
+
+    public String getSymbol() {
+        return symbol;
+    }
 }
